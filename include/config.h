@@ -5,17 +5,18 @@
 // ascii_id 与 Mac 桥 config.json 完全一致(转发 zhsh/<aid>/set 靠它对上)
 // 空调 KNX 地址按网关 protocolObjs 物理位置:客厅=12/x/0 餐厅=1 主卧=2 次卧=3 书房=4
 struct DevEntry {
-  const char* aid;        // ascii id(HA 实体/主题/转发用)
+  const char* aid;        // ascii id(HA 实体/主题用)
   const char* name;       // 中文名(显示)
-  const char* cid;        // 涂鸦 nodeId(本机仅 KNX 直控,cid 不参与功能)
+  const char* cid;        // 涂鸦 nodeId(仅备用,本地控制不依赖)
   uint8_t ctype;          // 0=气候类子设备, 1=Zigbee 面板/窗帘类
   const char* type;       // thermostat/ac/freshair/light/curtain
   const char* state_dp;   // 主状态 dp
-  const char* knx_sw;     // KNX 开关地址(nullptr=无)
+  const char* knx_sw;     // KNX 开关地址(nullptr=待网关导出后填入)
   const char* knx_temp;   // KNX 温度地址
   const char* knx_mode;   // KNX 模式地址
   const char* knx_fan;    // KNX 风速地址
-  bool status_only;       // true=纯状态(保留字段,当前无独立用途)
+  const char* module;     // 网关 moduleId(queryKnx 状态轮询用,""=不轮询)
+  bool status_only;       // 保留字段
   uint8_t temp_lo;        // 温度范围(0=无)
   uint8_t temp_hi;
 };
@@ -24,46 +25,48 @@ struct DevEntry {
 static const DevEntry DEVICES[] = {
     // --- 气候(KNX 直控,毫秒级) ---
     // aid              name        cid(占位)                 ct  sdp   KNX 开关      温度        模式        风速
-    {"wenkongqi",      "温控器",    "0-YOUR_DEVICE_ID_01",     0, "thermostat", "1",  "11/0/16",  "11/0/18",  nullptr,    nullptr,    false, 5, 35},
-    {"keting_kt",      "客厅空调",  "0-YOUR_DEVICE_ID_02",     0, "ac", "1",  "12/1/0",   "12/4/0",   "12/2/0",   "12/3/0",   false, 16, 32},
-    {"canting_kt",     "餐厅空调",  "0-YOUR_DEVICE_ID_03",     0, "ac", "1",  "12/1/1",   "12/4/1",   "12/2/1",   "12/3/1",   false, 16, 32},
-    {"zhuwo_kt",       "主卧空调",  "0-YOUR_DEVICE_ID_04",     0, "ac", "1",  "12/1/2",   "12/4/2",   "12/2/2",   "12/3/2",   false, 16, 32},
-    {"ciwo_kt",        "次卧空调",  "0-YOUR_DEVICE_ID_05",     0, "ac", "1",  "12/1/3",   "12/4/3",   "12/2/3",   "12/3/3",   false, 16, 32},
-    {"shufang_kt",     "书房空调",  "0-YOUR_DEVICE_ID_06",     0, "ac", "1",  "12/1/4",   "12/4/4",   "12/2/4",   "12/3/4",   false, 16, 32},
-    {"xinfeng",        "新风",     "0-YOUR_DEVICE_ID_07",     0, "freshair", "39", "14/0/2", nullptr,    nullptr,    "14/1/2",   false, 0, 0},
+    {"wenkongqi", "温控器", "0-YOUR_DEVICE_ID_01", 0, "thermostat", "1", "11/0/16", "11/0/18", nullptr, nullptr, "", false, 5, 35},
+    {"keting_kt",      "客厅空调",  "0-YOUR_DEVICE_ID_02",     0, "ac", "1",  "12/1/0",   "12/4/0",   "12/2/0",   "12/3/0",   "", false, 16, 32},
+    {"canting_kt",     "餐厅空调",  "0-YOUR_DEVICE_ID_03",     0, "ac", "1",  "12/1/1",   "12/4/1",   "12/2/1",   "12/3/1",   "", false, 16, 32},
+    {"zhuwo_kt",       "主卧空调",  "0-YOUR_DEVICE_ID_04",     0, "ac", "1",  "12/1/2",   "12/4/2",   "12/2/2",   "12/3/2",   "", false, 16, 32},
+    {"ciwo_kt",        "次卧空调",  "0-YOUR_DEVICE_ID_05",     0, "ac", "1",  "12/1/3",   "12/4/3",   "12/2/3",   "12/3/3",   "", false, 16, 32},
+    {"shufang_kt",     "书房空调",  "0-YOUR_DEVICE_ID_06",     0, "ac", "1",  "12/1/4",   "12/4/4",   "12/2/4",   "12/3/4",   "", false, 16, 32},
+    {"xinfeng",        "新风",     "0-YOUR_DEVICE_ID_07",     0, "freshair", "39", "14/0/2", nullptr,    nullptr,    "14/1/2",   "", false, 0, 0},
     // --- 灯光(面板回路,ctype1,执行走 Mac 桥涂鸦通路) ---
     // 玄关四建面板
-    {"keting_shaideng", "客厅射灯",  "a4c-YOUR_PANEL_ID_01",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"keting_zhudeng",  "客厅主灯",  "a4c-YOUR_PANEL_ID_01",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"canting_zhudeng", "餐厅主灯",  "a4c-YOUR_PANEL_ID_01",    1, "light", "26", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"fenweideng",      "氛围灯",    "a4c-YOUR_PANEL_ID_01",    1, "light", "27", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"keting_shaideng", "客厅射灯",  "a4c-YOUR_PANEL_ID_01",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"keting_zhudeng",  "客厅主灯",  "a4c-YOUR_PANEL_ID_01",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"canting_zhudeng", "餐厅主灯",  "a4c-YOUR_PANEL_ID_01",    1, "light", "26", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"fenweideng",      "氛围灯",    "a4c-YOUR_PANEL_ID_01",    1, "light", "27", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 玄关离家面板
-    {"dianshi_jgd",     "电视酒柜灯带","a4c-YOUR_PANEL_ID_02",   1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"zoulang_shaideng","走廊射灯",  "a4c-YOUR_PANEL_ID_02",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"yijian_duandian", "一键断电",  "a4c-YOUR_PANEL_ID_02",    1, "light", "27", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"dianshi_jgd",     "电视酒柜灯带","a4c-YOUR_PANEL_ID_02",   1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"zoulang_shaideng","走廊射灯",  "a4c-YOUR_PANEL_ID_02",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"yijian_duandian", "一键断电",  "a4c-YOUR_PANEL_ID_02",    1, "light", "27", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 主卧门口面板
-    {"yimao",           "衣帽灯",    "a4c-YOUR_PANEL_ID_03",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"zhuwo_zhudeng",   "主卧主灯",  "a4c-YOUR_PANEL_ID_03",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"zhuwo_daidai",    "主卧灯带",  "a4c-YOUR_PANEL_ID_03",    1, "light", "27", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"yimao",           "衣帽灯",    "a4c-YOUR_PANEL_ID_03",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"zhuwo_zhudeng",   "主卧主灯",  "a4c-YOUR_PANEL_ID_03",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"zhuwo_daidai",    "主卧灯带",  "a4c-YOUR_PANEL_ID_03",    1, "light", "27", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 书房面板
-    {"shufang_zhudeng", "书房主灯",  "a4c-YOUR_PANEL_ID_04",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"shufang_daidai",  "书房灯带",  "a4c-YOUR_PANEL_ID_04",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"shufang_zhudeng", "书房主灯",  "a4c-YOUR_PANEL_ID_04",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"shufang_daidai",  "书房灯带",  "a4c-YOUR_PANEL_ID_04",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 厨房面板
-    {"chufang_shaideng","厨房射灯",  "a4c-YOUR_PANEL_ID_05",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"chufang_daidai",  "厨房灯带",  "a4c-YOUR_PANEL_ID_05",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"chufang_shaideng","厨房射灯",  "a4c-YOUR_PANEL_ID_05",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"chufang_daidai",  "厨房灯带",  "a4c-YOUR_PANEL_ID_05",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 次卧门口面板
-    {"ciwo_shaideng",   "次卧射灯",  "a4c-YOUR_PANEL_ID_06",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"ciwo_zhudeng",    "次卧主灯",  "a4c-YOUR_PANEL_ID_06",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"ciwo_daidai",     "次卧灯带",  "a4c-YOUR_PANEL_ID_06",    1, "light", "26", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"ciwo_shaideng",   "次卧射灯",  "a4c-YOUR_PANEL_ID_06",    1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"ciwo_zhudeng",    "次卧主灯",  "a4c-YOUR_PANEL_ID_06",    1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"ciwo_daidai",     "次卧灯带",  "a4c-YOUR_PANEL_ID_06",    1, "light", "26", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 主卧床头面板
-    {"zhuwo_ct_sd",     "主卧床头射灯","a4c-YOUR_PANEL_ID_07",   1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"zhuwo_ct_dd",     "主卧床头灯带","a4c-YOUR_PANEL_ID_07",   1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"zhuwo_ct_sd",     "主卧床头射灯","a4c-YOUR_PANEL_ID_07",   1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"zhuwo_ct_dd",     "主卧床头灯带","a4c-YOUR_PANEL_ID_07",   1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
     // 次卧床头面板
-    {"ciwo_ct_sd",      "次卧床头射灯","a4c-YOUR_PANEL_ID_08",   1, "light", "24", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"ciwo_ct_dd",      "次卧床头灯带","a4c-YOUR_PANEL_ID_08",   1, "light", "25", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    // --- 窗帘电机(zigbee,ctype1;dp1=布帘 dp2=纱帘 待实测确认) ---
-    {"zhuwo_chuanglian","主卧窗帘",  "a4c-YOUR_PANEL_ID_09",    1, "curtain", "1", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
-    {"keting_chuanglian","客厅窗帘", "a4c-YOUR_PANEL_ID_10",    1, "curtain", "1", nullptr, nullptr, nullptr, nullptr, false, 0, 0},
+    {"ciwo_ct_sd",      "次卧床头射灯","a4c-YOUR_PANEL_ID_08",   1, "light", "24", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"ciwo_ct_dd",      "次卧床头灯带","a4c-YOUR_PANEL_ID_08",   1, "light", "25", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    // --- 窗帘(每屋双轨:布帘/纱帘各一地址位,待网关导出回填) ---
+    {"zhuwo_bulian",    "主卧布帘",  "a4c-YOUR_PANEL_ID_09",    1, "curtain", "1", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"zhuwo_shalian",   "主卧纱帘",  "a4c-YOUR_PANEL_ID_09",    1, "curtain", "2", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"keting_bulian",   "客厅布帘",  "a4c-YOUR_PANEL_ID_10",    1, "curtain", "1", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
+    {"keting_shalian",  "客厅纱帘",  "a4c-YOUR_PANEL_ID_10",    1, "curtain", "2", nullptr, nullptr, nullptr, nullptr, "", false, 0, 0},
 };
 static const uint8_t DEVICE_COUNT = sizeof(DEVICES) / sizeof(DEVICES[0]);
 
