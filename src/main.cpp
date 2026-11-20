@@ -61,12 +61,12 @@ static void route_command(const char *aid, const char *dp, const char *value, ui
     }
     if (addr && gw.control_knx(addr, type, val)) {
       Serial.printf("[exec] %s dp%s=%s via KNX %s\n", aid, dp, addr);
-      return;  // 本地成功,无需涂鸦回退
+      return;  // 本地成功,无需转发
     }
-    Serial.printf("[exec] %s dp%s KNX 不可用,回退涂鸦云端\n", aid, dp);
+    Serial.printf("[exec] %s dp%s KNX 不可用,转发 Mac 桥\n", aid, dp);
   }
-  // 涂鸦云端回退(ctype 由设备表决定)
-  tuya::publish_dps(dev->cid, dp, value, ctype);
+  // 转发 Mac 桥执行(灯光/窗帘走涂鸦通路;涂鸦 TLS 指纹仅 Python 客户端可过)
+  ha::forward_command(aid, dp, value);
 }
 
 // ================= 状态路由 =================
@@ -248,35 +248,6 @@ void setup() {
   web.on("/topics/del", HTTP_POST, []() {
     if (web.hasArg("topic")) bemfa::del_topic(web.arg("topic").c_str());
     web.send(200, "text/html", "已删除。<a href=/topics>返回</a>");
-  });
-  // 配置页加入口链接
-  web.begin();
-  web.on("/topics/add", HTTP_POST, []() {
-    if (web.hasArg("topic") && web.hasArg("device") && web.hasArg("kind"))
-      bemfa::add_topic(web.arg("topic").c_str(), web.arg("device").c_str(),
-                       web.arg("kind").c_str(), web.arg("dp").length() ? web.arg("dp").c_str() : "1");
-    web.send(200, "text/html", "已添加");
-  });
-  web.on("/devices", HTTP_GET, []() {
-    String html = "<html><head><meta charset=utf-8><title>设备对照表</title></head><body>"
-                  "<h2>设备 aid 对照表(添加主题时用)</h2><table border=1 cellpadding=4>"
-                  "<tr><th>aid</th><th>名称</th><th>类型</th><th>KNX 开关</th><th>KNX 温度</th></tr>";
-    for (uint8_t i = 0; i < DEVICE_COUNT; i++) {
-      const DevEntry &dev = DEVICES[i];
-      html += String("<tr><td>") + dev.aid + "</td><td>" + dev.name + "</td><td>" + dev.type +
-              "</td><td>" + (dev.knx_sw ? dev.knx_sw : "-") + "</td><td>" +
-              (dev.knx_temp ? dev.knx_temp : "-") + "</td></tr>";
-    }
-    for (uint8_t i = 0; i < PANEL_COUNT; i++) {
-      const PanelEntry &pn = PANELS[i];
-      html += String("<tr><td>") + pn.aid + "</td><td>" + pn.name + "</td><td>面板状态</td><td>-</td><td>-</td></tr>";
-    }
-    html += "</table><p><a href=/topics>返回主题管理</a> | <a href=/>返回配置页</a></p></body></html>";
-    web.send(200, "text/html", html);
-  });
-  web.on("/topics/del", HTTP_POST, []() {
-    if (web.hasArg("topic")) bemfa::del_topic(web.arg("topic").c_str());
-    web.send(200, "text/html", "已删除");
   });
   web.begin();
 }

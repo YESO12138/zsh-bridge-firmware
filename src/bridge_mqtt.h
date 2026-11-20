@@ -37,13 +37,13 @@ String topics_json();
 void sync_state(const char *device_aid, const char *dp, const char *value);
 }  // namespace bemfa
 
-// ===== HA MQTT(discovery + 命令 + 状态)=====
+// ===== HA MQTT(转发器 + 状态同步;discovery/执行由 Mac 桥独占)=====
 namespace ha {
 extern PubSubClient client;
 extern bool connected;
 void setup(const BridgeConfig &cfg);
 void loop();
-void publish_discovery();
+void forward_command(const char *aid, const char *dp, const char *value);
 void publish_state(const char *aid, const char *dps_json);
 void publish_temp_state(const char *aid, const char *dp, const char *value);
 }  // namespace ha

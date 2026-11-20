@@ -6,7 +6,7 @@
 // bemfa MQTT(米家/小爱入口,主题表驱动)
 // 主题表存 NVS(key: bf_topics,JSON 数组):
 //   [{"t":"主题","d":"设备aid","k":"ac|light","dp":"主状态dp"}]
-// kind: "ac"(bemfa 空调格式 on#温度) | "light"(on/off → dp)
+// kind: "ac"(bemfa 空调格式 on#温度) | "light"(on/off → dp) | "curtain"(on/off → dp,dp1=布帘 dp2=纱帘)
 // ============================================================
 namespace bemfa {
 
@@ -50,9 +50,10 @@ static void route_command(const TopicEntry &t, const char *raw) {
     if (strcmp(raw, "off") == 0) { command_cb(t.device_aid, "1", "false", 0); return; }
     if (strncmp(raw, "on#", 3) == 0) {
       int temp = atoi(raw + 3);
-      if (temp >= 5 && temp <= 35) command_cb(t.device_aid, "32", raw + 3, 0);
+      // dp2:固件侧映射 knx_temp;Mac 桥侧 kmap["2"]=temp —— 两边都正确
+      if (temp >= 5 && temp <= 35) command_cb(t.device_aid, "2", raw + 3, 0);
     }
-  } else if (strcmp(t.kind, "light") == 0) {
+  } else if (strcmp(t.kind, "light") == 0 || strcmp(t.kind, "curtain") == 0) {
     const char *v = strcmp(raw, "on") == 0 ? "true" : strcmp(raw, "off") == 0 ? "false" : nullptr;
     if (v) command_cb(t.device_aid, t.dp, v, 1);
   }
@@ -170,8 +171,7 @@ void del_topic(const char *topic) {
 void sync_state(const char *device_aid, const char *dp, const char *value) {
   for (auto &t : topics) {
     if (strcmp(t.device_aid, device_aid) != 0) continue;
-    const char *key = (strcmp(t.kind, "ac") == 0) ? "1" : t.dp;
-    if (strcmp(dp, key) != 0) continue;
+    if (strcmp(dp, t.dp) != 0) continue;  // 主题条目自带主状态 dp(空调=1 新风=39 灯=回路 dp)
     const char *raw = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0) ? "on" : "off";
     const char *prev = last_raw_of(t.topic);
     if (prev && strcmp(prev, raw) == 0) continue;
