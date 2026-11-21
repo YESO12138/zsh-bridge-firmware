@@ -35,47 +35,8 @@ static const char *aid_of(const char *cid) {
   return nullptr;
 }
 
-// ================= 地址反查表(状态轮询 → 设备/dp)=================
-struct AddrMap {
-  char addr[16];
-  const DevEntry *dev;
-  const char *dp;
-};
-static std::vector<AddrMap> addr_map;
-
-static void addr_fb(String &a) {  // 反馈地址 = 发送地址末段 +128(气候类实测规律)
-  int p = a.lastIndexOf('/');
-  if (p > 0) { int s = a.substring(p + 1).toInt() + 128; if (s <= 255) a = a.substring(0, p + 1) + s; }
-}
-static void addrmap_add(const char *addr, const DevEntry *dev, const char *dp) {
-  if (!addr) return;
-  String a(addr);
-  AddrMap m; strlcpy(m.addr, a.c_str(), sizeof(m.addr)); m.dev = dev; m.dp = dp;
-  addr_map.push_back(m);
-  String fb(a); addr_fb(fb);
-  if (fb != a) { AddrMap f; strlcpy(f.addr, fb.c_str(), sizeof(f.addr)); f.dev = dev; f.dp = dp; addr_map.push_back(f); }
-}
-static void addrmap_build() {
-  addr_map.clear();
-  for (uint8_t i = 0; i < DEVICE_COUNT; i++) {
-    const DevEntry *d = &DEVICES[i];
-    addrmap_add(d->knx_sw, d, d->state_dp);
-    addrmap_add(d->knx_temp, d, strcmp(d->type, "thermostat") == 0 ? "32" : "2");
-    addrmap_add(d->knx_mode, d, "4");
-    addrmap_add(d->knx_fan, d, "5");
-  }
-  Serial.printf("[map] 地址反查表 %d 条\n", addr_map.size());
-}
-static const AddrMap *addrmap_find(const char *addr) {
-  for (auto &m : addr_map)
-    if (strcmp(m.addr, addr) == 0) return &m;
-  return nullptr;
-}
-
-// ================= 状态路由 =================
-static void route_state(const char *aid, const char *dp, const char *value);
-
 // ================= 命令路由(KNX 本地直控,毫秒级)=================
+static void route_state(const char *aid, const char *dp, const char *value);
 static void route_command(const char *aid, const char *dp, const char *value, uint8_t ctype) {
   (void)ctype;  // 全本地执行,ctype 仅作日志
   const DevEntry *dev = find_dev(aid);
@@ -98,20 +59,43 @@ static void route_command(const char *aid, const char *dp, const char *value, ui
     // 任意回路 dp(面板灯 24-27):一律走 knx_sw 开关语义
     addr = dev->knx_sw; type = 0; val = bval ? 1 : 0;
   }
+  // 回显值:开关类 true/false,数值类(温度/模式/风速)保持数字
+  String echo = (strcmp(value, "true") == 0 || strcmp(value, "false") == 0) ? String(value) : String(ival);
+  if (strcmp(dev->type, "curtain") == 0) echo = (ival > 0) ? "true" : "false";
   if (addr && gw.control_knx(addr, type, val)) {
     Serial.printf("[exec] %s dp%s=%s via KNX %s\n", aid, dp, value, addr);
     // 立即回显状态(乐观更新,轮询会校正)
-    route_state(dev->aid, dp, bval ? "true" : String(ival).c_str());
+    route_state(dev->aid, dp, echo.c_str());
     return;
   }
-  Serial.printf("[exec] %s dp%s 无 KNX 地址或执行失败(待网关导出)\n", aid, dp);
+  // 无 KNX 地址(灯光/窗帘,zigbee 面板回路)→ 涂鸦云端 ctype 路径
+  String val2 = value;
+  const char *dp2 = dp;
+  if (strcmp(dev->type, "curtain") == 0) {
+    dp2 = "1";  // 枚举控制 dp
+    val2 = (bval || strcmp(value, "false") == 0 || ival > 0) ? (bval || ival > 0 ? "open" : "close") : value;
+    if (strcmp(value, "true") == 0) val2 = "open";
+    if (strcmp(value, "false") == 0) val2 = "close";
+  }
+  if (tuya::publish_dps(dev->cid, dp2, val2.c_str(), ctype)) {
+    Serial.printf("[exec] %s dp%s=%s via 涂鸦云 ctype%d\n", aid, dp2, val2.c_str(), ctype);
+    route_state(dev->aid, dp, echo.c_str());
+    return;
+  }
+  Serial.printf("[exec] %s dp%s 执行失败(KNX 无地址且涂鸦云未连)\n", aid, dp);
 }
 
 // ================= 状态路由 =================
 static void route_state(const char *aid, const char *dp, const char *value) {
+  const DevEntry *st_dev = find_dev(aid);
+  if (st_dev && strcmp(st_dev->type, "curtain") == 0 && strcmp(dp, st_dev->state_dp) == 0) {
+    value = (atoi(value) > 0 || strcmp(value, "true") == 0) ? "true" : "false";
+  }
   // HA 状态:温度走 temp_state,其余走 state
   // HA 状态:温度走 temp_state,其余走 state
-  bool is_temp = (strcmp(dp, "32") == 0 || strcmp(dp, "2") == 0 || strcmp(dp, "24") == 0);
+  const DevEntry *dev = find_dev(aid);
+  bool is_temp = (strcmp(dp, "32") == 0 || strcmp(dp, "2") == 0 ||
+                  (strcmp(dp, "24") == 0 && dev && strcmp(dev->type, "thermostat") == 0));
   String payload = String("{\"") + dp + "\":" + (strcmp(value, "true") == 0 || strcmp(value, "false") == 0 ? value : String(atoi(value)).c_str()) + "}";
   if (is_temp) ha::publish_temp_state(aid, dp, strcmp(value, "true") == 0 ? "1" : value);
   else {
@@ -120,12 +104,23 @@ static void route_state(const char *aid, const char *dp, const char *value) {
   }
 }
 
-// ================= 状态轮询(queryKnx 循环,替代涂鸦云状态)=================
-static char poll_modules[16][16];   // 去重后的 moduleId 列表
+// ================= 状态轮询(queryKnx 循环;气候类 dp 键控)=================
+struct PollMod {
+  char id[16];
+  const DevEntry *dev;    // 一模块对一台气候设备
+};
+static PollMod poll_mods[16];
 static uint8_t poll_count = 0;
 static uint8_t poll_idx = 0;
 static unsigned long last_poll = 0;
-static bool poll_raw_logged = false;   // 首轮打印原始响应(现场调整解析用)
+
+// 数值型 dp(温度/模式/风速);其余按开关布尔处理
+static bool numeric_dp(const DevEntry *dev, const char *dp) {
+  if (strcmp(dp, "2") == 0 || strcmp(dp, "32") == 0 || strcmp(dp, "4") == 0 || strcmp(dp, "5") == 0) return true;
+  if (strcmp(dp, "24") == 0 && strcmp(dev->type, "thermostat") == 0) return true;
+  if (strcmp(dp, "102") == 0) return true;
+  return false;
+}
 
 static void poll_build() {
   poll_count = 0;
@@ -134,53 +129,36 @@ static void poll_build() {
     if (!m || !m[0]) continue;
     bool dup = false;
     for (uint8_t j = 0; j < poll_count; j++)
-      if (strcmp(poll_modules[j], m) == 0) { dup = true; break; }
-    if (!dup) { strlcpy(poll_modules[poll_count], m, 16); poll_count++; }
+      if (strcmp(poll_mods[j].id, m) == 0) { dup = true; break; }
+    if (!dup) {
+      strlcpy(poll_mods[poll_count].id, m, 16);
+      poll_mods[poll_count].dev = &DEVICES[i];
+      poll_count++;
+    }
   }
   Serial.printf("[poll] 轮询模块 %d 个\n", poll_count);
 }
 
-// 容错解析:递归找 {addr 地址键, value 值键} 对
-static void poll_walk(JsonVariant v, std::vector<std::pair<String, String>> &out, int depth) {
-  if (depth > 6 || out.size() >= 64) return;
-  if (v.is<JsonObject>()) {
-    JsonObject o = v.as<JsonObject>();
-    String addr = "";
-    for (const char *k : {"addr", "address", "ga", "group"})
-      if (o[k].is<const char*>() || o[k].is<int>()) { addr = o[k].as<String>(); break; }
-    if (addr.length()) {
-      for (const char *vk : {"value", "val", "current", "state", "cur"}) {
-        if (o[vk].is<JsonVariant>() && !o[vk].isNull()) {
-          out.push_back({addr, o[vk].as<String>()});
-          break;
-        }
-      }
-    }
-    for (JsonPair kv : o) poll_walk(kv.value(), out, depth + 1);
-  } else if (v.is<JsonArray>()) {
-    for (JsonVariant e : v.as<JsonArray>()) poll_walk(e, out, depth + 1);
-  }
-}
-
 static void poll_once() {
   if (poll_count == 0 || !wifi_ok) return;
-  const char *mod = poll_modules[poll_idx];
+  PollMod &pm = poll_mods[poll_idx];
   poll_idx = (poll_idx + 1) % poll_count;
-  String resp = gw.query_knx(mod);
+  String resp = gw.query_knx(pm.id);
   if (resp.length() == 0) return;
-  if (!poll_raw_logged) { Serial.printf("[poll] %s 原始响应: %s\n", mod, resp.c_str()); poll_raw_logged = true; }
   JsonDocument doc;
   if (deserializeJson(doc, resp) != DeserializationError::Ok) return;
-  std::vector<std::pair<String, String>> pairs;
-  poll_walk(doc.as<JsonVariant>(), pairs, 0);
-  for (auto &p : pairs) {
-    const AddrMap *m = addrmap_find(p.first.c_str());
-    if (!m) continue;
-    String raw = p.second;
-    raw.toLowerCase();
-    const char *val = (raw == "1" || raw == "true" || raw == "on") ? "true"
-                    : (raw == "0" || raw == "false" || raw == "off") ? "false" : raw.c_str();
-    route_state(m->dev->aid, m->dp, val);
+  JsonObject data = doc["data"].as<JsonObject>();
+  if (!data) return;
+  for (JsonPair kv : data) {
+    const char *dp = kv.key().c_str();
+    String raw = kv.value().as<String>();
+    String val;
+    if (numeric_dp(pm.dev, dp)) val = raw;
+    else {
+      int n = raw.toInt();
+      val = (n == 1) ? "true" : (n == 0) ? "false" : raw;
+    }
+    route_state(pm.dev->aid, dp, val.c_str());
   }
 }
 
@@ -279,15 +257,19 @@ void setup() {
   ArduinoOTA.setPassword("zshota");
   ArduinoOTA.begin();
 
-  // 回调接线(bemfa/HA 命令 → route_command;轮询状态 → route_state)
+  // 回调接线(bemfa/HA 命令 → route_command;涂鸦状态 cid→aid → route_state)
   command_cb = route_command;
+  state_cb = [](const char *cid, const char *dp, const char *value) {
+    const char *aid = aid_of(cid);
+    if (aid) route_state(aid, dp, value);
+  };
 
-  // 网关 + 两路 MQTT(涂鸦云状态通路已弃用:TLS 指纹白名单仅 Python 可过,全本地化)
+  // 网关 + 三路 MQTT(气候 KNX 直控;灯光/窗帘涂鸦 ctype;状态 queryKnx 轮询 + 涂鸦回执)
   gw.configure(cfg.gw_host, cfg.gw_user, cfg.gw_pass);
   gw.ensure_login();
+  tuya::setup(cfg);
   bemfa::setup(cfg);
   ha::setup(cfg);
-  addrmap_build();
   poll_build();
 
   // Web 配置页
@@ -355,6 +337,7 @@ void setup() {
 void loop() {
   ArduinoOTA.handle();
   web.handleClient();
+  tuya::loop();
   bemfa::loop();
   ha::loop();
 

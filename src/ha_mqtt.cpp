@@ -64,6 +64,7 @@ static void on_message(char *topic, byte *payload, unsigned int length) {
     String dp(doc["dp"].as<const char*>());
     String val;
     if (doc["value"].is<bool>()) val = doc["value"].as<bool>() ? "true" : "false";
+    else if (doc["value"].is<const char*>()) val = String(doc["value"].as<const char*>());  // 枚举字符串(open/close)
     else val = String(doc["value"].as<int>());
     if (command_cb) command_cb(aid.c_str(), dp.c_str(), val.c_str(), dev->ctype);
   } else {
@@ -116,6 +117,7 @@ void publish_discovery() {
                 "/state\",\"payload_on\":\"true\",\"payload_off\":\"false\",\"state_on\":\"true\",\"state_off\":\"false\",\"value_template\":\"{{ value_json['" +
                 dev.state_dp + "'] | lower }}\"," + avail + ",\"device\":" + dev_json + "}";
     client.publish((String("homeassistant/switch/") + eid + "/config").c_str(), sw.c_str(), true);
+    client.publish((String("zhsh/") + aid + "/availability").c_str(), "online", true);
 
     if (dev.temp_hi > 0) {
       String num = String("{\"name\":\"") + dev.name + " 温度设定\",\"unique_id\":\"" + eid +
@@ -164,6 +166,7 @@ void publish_temp_state(const char *aid, const char *dp, const char *value) {
 void setup(const BridgeConfig &cfg) {
   strlcpy(host, cfg.ha_host, sizeof(host));
   port = cfg.ha_port;
+  client.setBufferSize(768);   // discovery 配置 ~500B,默认 256 会静默丢弃
 }
 
 }  // namespace ha

@@ -53,7 +53,11 @@ static void route_command(const TopicEntry &t, const char *raw) {
       // dp2:固件侧映射 knx_temp;Mac 桥侧 kmap["2"]=temp —— 两边都正确
       if (temp >= 5 && temp <= 35) command_cb(t.device_aid, "2", raw + 3, 0);
     }
-  } else if (strcmp(t.kind, "light") == 0 || strcmp(t.kind, "curtain") == 0) {
+  } else if (strcmp(t.kind, "curtain") == 0) {
+    // 窗帘 = 独立电机,dp1 枚举控制(open/close/stop;实测抓包确认)
+    const char *v = strcmp(raw, "on") == 0 ? "open" : strcmp(raw, "off") == 0 ? "close" : nullptr;
+    if (v) command_cb(t.device_aid, "1", v, 1);
+  } else if (strcmp(t.kind, "light") == 0) {
     const char *v = strcmp(raw, "on") == 0 ? "true" : strcmp(raw, "off") == 0 ? "false" : nullptr;
     if (v) command_cb(t.device_aid, t.dp, v, 1);
   }
@@ -172,11 +176,12 @@ void sync_state(const char *device_aid, const char *dp, const char *value) {
   for (auto &t : topics) {
     if (strcmp(t.device_aid, device_aid) != 0) continue;
     if (strcmp(dp, t.dp) != 0) continue;  // 主题条目自带主状态 dp(空调=1 新风=39 灯=回路 dp)
-    const char *raw = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0) ? "on" : "off";
+    bool is_on = (strcmp(value, "true") == 0) || (strcmp(value, "false") != 0 && atoi(value) > 0);
+    const char *raw = is_on ? "on" : "off";
     const char *prev = last_raw_of(t.topic);
     if (prev && strcmp(prev, raw) == 0) continue;
     set_last_raw(t.topic, raw);
-    client.publish(t.topic, raw, 1);
+    client.publish(t.topic, raw, false);  // 非保留:retained 会导致重启重放旧命令
     Serial.printf("[bemfa] state sync %s = %s\n", t.topic, raw);
   }
 }

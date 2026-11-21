@@ -59,7 +59,13 @@ static bool build_control(const char *cid, const char *dp, const char *value,
   JsonObject dps = data["dps"].to<JsonObject>();
   if (strcmp(value, "true") == 0) dps[dp] = true;
   else if (strcmp(value, "false") == 0) dps[dp] = false;
-  else dps[dp] = atoi(value);
+  else {
+    bool numeric = true;
+    for (const char *p = value; *p; p++)
+      if (*p < '0' || *p > '9') { numeric = false; break; }
+    if (numeric && value[0]) dps[dp] = atoi(value);
+    else dps[dp] = value;   // 枚举字符串(窗帘 open/close/stop)
+  }
   doc["protocol"] = 5;
   doc["t"] = (uint32_t)time(nullptr);
   char pt[256];
@@ -163,6 +169,7 @@ void reconnect() {
     connected = true;
     client.setCallback(on_message);
     client.subscribe(in_topic.c_str(), 1);
+    client.subscribe((String("smart/mb/out/") + gw_dev).c_str(), 1);  // 旁听云端命令(学习设备原生 dps 格式)
     Serial.println("[tuya] connected");
   } else {
     Serial.printf("[tuya] connect fail state=%d\n", client.state());

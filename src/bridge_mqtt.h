@@ -15,14 +15,13 @@ extern std::function<void(const char *aid, const char *dp, const char *value, ui
 // 状态:cid=设备 nodeId, dp=dp键, value=字符串值
 extern std::function<void(const char *cid, const char *dp, const char *value)> state_cb;
 
-// ===== 涂鸦云 MQTT(灯光 ctype 路径 + 状态回执)=====
+// ===== 涂鸦云 MQTT(灯光/窗帘 ctype 路径 + 状态回执)=====
 namespace tuya {
 extern PubSubClient client;
 extern bool connected;
 void setup(const BridgeConfig &cfg);
 void loop();
-bool publish_dps(const char *cid, const char *dp, bool value, uint8_t ctype);
-bool publish_dps(const char *cid, const char *dp, int value, uint8_t ctype);
+bool publish_dps(const char *cid, const char *dp, const char *value, uint8_t ctype);
 }  // namespace tuya
 
 // ===== bemfa MQTT(米家/小爱入口,双主题)=====

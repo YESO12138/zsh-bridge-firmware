@@ -6,7 +6,6 @@ static Preferences prefs;
 void config_load(BridgeConfig &cfg) {
   cfg = DEFAULT_CONFIG;
   prefs.begin("zshbridge", true);
-  prefs.end();
   if (prefs.isKey("bemfa_uid"))   strlcpy(cfg.bemfa_uid,      prefs.getString("bemfa_uid").c_str(),      sizeof(cfg.bemfa_uid));
   if (prefs.isKey("tuya_user"))   strlcpy(cfg.tuya_user,      prefs.getString("tuya_user").c_str(),      sizeof(cfg.tuya_user));
   if (prefs.isKey("tuya_pass"))   strlcpy(cfg.tuya_pass,      prefs.getString("tuya_pass").c_str(),      sizeof(cfg.tuya_pass));
